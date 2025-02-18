@@ -21,6 +21,7 @@ from basicsr.utils import get_root_logger
 #     #       'Otherwise install BasicSR with compiling dcn.')
 #
 
+
 @torch.no_grad()
 def default_init_weights(module_list, scale=1, bias_fill=0, **kwargs):
     """Initialize network weights.
@@ -285,8 +286,9 @@ class LayerNormFunction(torch.autograd.Function):
 
         mean_gy = (g * y).mean(dim=1, keepdim=True)
         gx = 1. / torch.sqrt(var + eps) * (g - y * mean_gy - mean_g)
-        return gx, (grad_output * y).sum(dim=3).sum(dim=2).sum(dim=0), grad_output.sum(dim=3).sum(dim=2).sum(
-            dim=0), None
+        return gx, (grad_output * y).sum(dim=3).sum(dim=2).sum(
+            dim=0), grad_output.sum(dim=3).sum(dim=2).sum(dim=0), None
+
 
 class LayerNorm2d(nn.Module):
 
@@ -297,10 +299,24 @@ class LayerNorm2d(nn.Module):
         self.eps = eps
 
     def forward(self, x):
-        return LayerNormFunction.apply(x, self.weight, self.bias, self.eps)
+        # tabbing out for jit
+        # return LayerNormFunction.apply(x, self.weight, self.bias, self.eps)
+        # ctx.eps = eps
+        eps = self.eps
+        weight = self.weight
+        bias = self.bias
+        N, C, H, W = x.size()
+        mu = x.mean(1, keepdim=True)
+        var = (x - mu).pow(2).mean(1, keepdim=True)
+        y = (x - mu) / (var + eps).sqrt()
+        # ctx.save_for_backward(y, var, weight)
+        y = weight.view(1, C, 1, 1) * y + bias.view(1, C, 1, 1)
+        return y
+
 
 # handle multiple input
 class MySequential(nn.Sequential):
+
     def forward(self, *inputs):
         for module in self._modules.values():
             if type(inputs) == tuple:
@@ -309,7 +325,10 @@ class MySequential(nn.Sequential):
                 inputs = module(inputs)
         return inputs
 
+
 import time
+
+
 def measure_inference_speed(model, data, max_iter=200, log_interval=50):
     model.eval()
 
